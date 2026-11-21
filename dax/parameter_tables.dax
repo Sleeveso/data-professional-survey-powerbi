@@ -1,0 +1,41 @@
+// =============================================================================
+//  Calculated tables: what-if parameters and field parameters
+//  Modeling > New table, paste ONE block per table.
+//  (Equivalent to Modeling > New parameter; pasting the DAX is simply faster and diff-able.)
+// =============================================================================
+
+// ---- 1. Minimum sample size (what-if) - drives every "(Reliable)" measure -----------------
+Min Sample Size = GENERATESERIES ( 1, 30, 1 )
+//  -> rename the column to [Min Sample Size]; add a Single-value slicer; default 10.
+//  -> create the helper measure in measures.dax:  Min Sample Size Value
+
+// ---- 2. Salary threshold (what-if) ---------------------------------------------------------
+Salary Threshold = GENERATESERIES ( 20000, 250000, 5000 )
+//  -> rename the column to [Salary Threshold]; Slider slicer; default 75,000.
+
+// ---- 3. Top N (what-if) --------------------------------------------------------------------
+Top N = GENERATESERIES ( 3, 12, 1 )
+//  -> rename the column to [Top N]; default 5.
+
+// ---- 4. Field parameter: choose the DIMENSION on the X axis --------------------------------
+Dimension Selector =
+{
+    ( "Role",       NAMEOF ( 'dim_job'[Job Title] ),            0 ),
+    ( "Industry",   NAMEOF ( 'dim_industry'[Industry] ),        1 ),
+    ( "Country",    NAMEOF ( 'dim_country'[Country] ),          2 ),
+    ( "Education",  NAMEOF ( 'dim_education'[Education Level] ),3 ),
+    ( "Age Group",  NAMEOF ( 'dim_age_group'[Age Group] ),      4 ),
+    ( "Gender",     NAMEOF ( 'fact_survey'[Gender] ),           5 )
+}
+
+// ---- 5. Field parameter: choose the METRIC on the Y axis ------------------------------------
+Metric Selector =
+{
+    ( "Average Salary",        NAMEOF ( '_Measures'[Avg Salary (Reliable)] ),            0 ),
+    ( "Average Happiness",     NAMEOF ( '_Measures'[Avg Happiness (Factor, Reliable)] ), 1 ),
+    ( "Career Switchers %",    NAMEOF ( '_Measures'[Career Switchers %] ),               2 ),
+    ( "Found It Hard %",       NAMEOF ( '_Measures'[Found It Hard %] ),                  3 ),
+    ( "Respondents",           NAMEOF ( '_Measures'[Respondents] ),                      4 )
+}
+//  Field-parameter tables get 3 columns:  [Metric Selector] (label), [Metric Selector Fields], [Metric Selector Order].
+//  Use the table's [Metric Selector] column in a slicer, and the whole table's fields on the chart axis/values.

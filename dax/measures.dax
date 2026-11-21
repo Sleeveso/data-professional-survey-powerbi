@@ -1,0 +1,387 @@
+// =============================================================================
+//  Data Professional Survey - DAX measure library
+//  Host table : _Measures   (create via Home > Enter Data > blank table named "_Measures",
+//               then delete the placeholder column and hide it)
+//  Usage      : Model view > New measure, paste one block at a time (or use Tabular Editor).
+//  Convention : "// FORMAT:" = format string, "// FOLDER:" = Display folder.
+//  Note       : Written against the model in /model/data_model.md. Not executed in this
+//               repo's CI - verify with the QA table in /docs/QA_CHECKLIST.md after loading.
+// =============================================================================
+
+
+// ############################  01 | CORE  ####################################
+
+// FOLDER: 01 Core | FORMAT: #,0
+Respondents =
+COUNTROWS ( fact_survey )
+
+// FOLDER: 01 Core | FORMAT: #,0
+Respondents (All) =
+CALCULATE ( [Respondents], REMOVEFILTERS () )
+
+// FOLDER: 01 Core | FORMAT: 0.0%
+Share of Respondents % =
+DIVIDE ( [Respondents], CALCULATE ( [Respondents], ALLSELECTED () ) )
+
+// FOLDER: 01 Core | FORMAT: 0.0
+Avg Age =
+AVERAGE ( fact_survey[Age] )
+
+// FOLDER: 01 Core | FORMAT: 0
+Median Age =
+MEDIAN ( fact_survey[Age] )
+
+// FOLDER: 01 Core | FORMAT: 0.0%
+Female % =
+DIVIDE ( CALCULATE ( [Respondents], fact_survey[Gender] = "Female" ), [Respondents] )
+
+// FOLDER: 01 Core | FORMAT: 0.0%
+Male % =
+DIVIDE ( CALCULATE ( [Respondents], fact_survey[Gender] = "Male" ), [Respondents] )
+
+
+// ####################  02 | SAMPLE-SIZE GUARD  ###############################
+// Small segments (e.g. PhD n=5) give misleading averages. Every "(Reliable)" measure
+// returns BLANK() when the segment has fewer respondents than the slicer value.
+
+// FOLDER: 02 Reliability | FORMAT: 0
+Min Sample Size Value =
+SELECTEDVALUE ( 'Min Sample Size'[Min Sample Size], 10 )
+
+// FOLDER: 02 Reliability | FORMAT: TRUE/FALSE
+Meets Sample Size =
+[Respondents] >= [Min Sample Size Value]
+
+// FOLDER: 02 Reliability
+Sample Size Label =
+IF (
+    [Meets Sample Size],
+    "n = " & FORMAT ( [Respondents], "#,0" ),
+    "n = " & FORMAT ( [Respondents], "#,0" ) & " (below min. sample)"
+)
+
+
+// ############################  03 | SALARY  ###################################
+// Salary is collected as a band, so these are estimates based on band midpoints.
+
+// FOLDER: 03 Salary | FORMAT: $#,##0
+Avg Salary =
+AVERAGE ( fact_survey[Salary Midpoint] )
+
+// FOLDER: 03 Salary | FORMAT: $#,##0
+Avg Salary (Reliable) =
+IF ( [Meets Sample Size], [Avg Salary] )
+
+// FOLDER: 03 Salary | FORMAT: $#,##0
+Median Salary =
+MEDIAN ( fact_survey[Salary Midpoint] )
+
+// FOLDER: 03 Salary | FORMAT: $#,##0
+Avg Salary (Overall) =
+CALCULATE ( [Avg Salary], REMOVEFILTERS () )
+
+// FOLDER: 03 Salary | FORMAT: +$#,##0;-$#,##0;$0
+Salary vs Overall ($) =
+IF ( [Meets Sample Size], [Avg Salary] - [Avg Salary (Overall)] )
+
+// FOLDER: 03 Salary | FORMAT: 0
+Salary Index (Overall = 100) =
+IF ( [Meets Sample Size], DIVIDE ( [Avg Salary], [Avg Salary (Overall)] ) * 100 )
+
+// FOLDER: 03 Salary | FORMAT: 0.0%
+High Earner % (86k+) =
+DIVIDE (
+    CALCULATE ( [Respondents], dim_salary[Salary Min] >= 86000 ),
+    [Respondents]
+)
+
+// FOLDER: 03 Salary | FORMAT: 0
+Salary Threshold Value =
+SELECTEDVALUE ( 'Salary Threshold'[Salary Threshold], 75000 )
+
+// What-if: share of respondents earning at least the threshold chosen on the slicer
+// FOLDER: 03 Salary | FORMAT: 0.0%
+% At or Above Threshold =
+VAR _threshold = [Salary Threshold Value]
+RETURN
+    DIVIDE (
+        CALCULATE ( [Respondents], FILTER ( fact_survey, fact_survey[Salary Midpoint] >= _threshold ) ),
+        [Respondents]
+    )
+
+// FOLDER: 03 Salary | FORMAT: $#,##0
+Avg Salary - Male =
+CALCULATE ( [Avg Salary], fact_survey[Gender] = "Male" )
+
+// FOLDER: 03 Salary | FORMAT: $#,##0
+Avg Salary - Female =
+CALCULATE ( [Avg Salary], fact_survey[Gender] = "Female" )
+
+// Positive = men earn more than women; negative = women earn more. BLANK if either group is too small.
+// FOLDER: 03 Salary | FORMAT: +0.0%;-0.0%;0.0%
+Gender Pay Gap % (M vs F) =
+VAR _m = CALCULATE ( [Respondents], fact_survey[Gender] = "Male" )
+VAR _f = CALCULATE ( [Respondents], fact_survey[Gender] = "Female" )
+RETURN
+    IF (
+        _m >= [Min Sample Size Value] && _f >= [Min Sample Size Value],
+        DIVIDE ( [Avg Salary - Male] - [Avg Salary - Female], [Avg Salary - Male] )
+    )
+
+// FOLDER: 03 Salary
+Salary Arrow =
+SWITCH (
+    TRUE (),
+    NOT [Meets Sample Size], "",
+    [Avg Salary] > [Avg Salary (Overall)], "▲",
+    [Avg Salary] < [Avg Salary (Overall)], "▼",
+    "●"
+)
+
+
+// ###########################  04 | HAPPINESS  ################################
+// Respondent-level = average of the six ratings a person gave.
+// Factor-level     = uses fact_happiness (one row per respondent x factor, blanks excluded).
+
+// FOLDER: 04 Happiness | FORMAT: 0.00
+Avg Overall Happiness =
+AVERAGE ( fact_survey[Overall Happiness] )
+
+// FOLDER: 04 Happiness | FORMAT: 0.00
+Avg Happiness (Factor) =
+AVERAGE ( fact_happiness[Happiness Score] )
+
+// FOLDER: 04 Happiness | FORMAT: 0.00
+Avg Happiness (Factor, Reliable) =
+IF ( [Meets Sample Size], [Avg Happiness (Factor)] )
+
+// FOLDER: 04 Happiness | FORMAT: 0.0%
+Happy % (7-10) =
+DIVIDE (
+    CALCULATE ( COUNTROWS ( fact_happiness ), fact_happiness[Happiness Category] = "Happy (7-10)" ),
+    COUNTROWS ( fact_happiness )
+)
+
+// FOLDER: 04 Happiness | FORMAT: 0.0%
+Unhappy % (0-3) =
+DIVIDE (
+    CALCULATE ( COUNTROWS ( fact_happiness ), fact_happiness[Happiness Category] = "Unhappy (0-3)" ),
+    COUNTROWS ( fact_happiness )
+)
+
+// FOLDER: 04 Happiness | FORMAT: +0.0%;-0.0%;0.0%
+Net Happiness % =
+[Happy % (7-10)] - [Unhappy % (0-3)]
+
+// FOLDER: 04 Happiness | FORMAT: +0.00;-0.00;0.00
+Happiness vs Overall =
+IF ( [Meets Sample Size], [Avg Overall Happiness] - CALCULATE ( [Avg Overall Happiness], REMOVEFILTERS () ) )
+
+// FOLDER: 04 Happiness
+Lowest Scoring Factor =
+VAR _t =
+    ADDCOLUMNS (
+        VALUES ( dim_happiness_factor[Happiness Factor] ),
+        "@avg", CALCULATE ( [Avg Happiness (Factor)] )
+    )
+VAR _min = MINX ( _t, [@avg] )
+RETURN
+    IF (
+        ISBLANK ( _min ),
+        BLANK (),
+        CONCATENATEX ( FILTER ( _t, [@avg] = _min ), dim_happiness_factor[Happiness Factor], ", " )
+    )
+
+// FOLDER: 04 Happiness
+Highest Scoring Factor =
+VAR _t =
+    ADDCOLUMNS (
+        VALUES ( dim_happiness_factor[Happiness Factor] ),
+        "@avg", CALCULATE ( [Avg Happiness (Factor)] )
+    )
+VAR _max = MAXX ( _t, [@avg] )
+RETURN
+    IF (
+        ISBLANK ( _max ),
+        BLANK (),
+        CONCATENATEX ( FILTER ( _t, [@avg] = _max ), dim_happiness_factor[Happiness Factor], ", " )
+    )
+
+// Conditional-formatting helper (Format > Background color > Field value). 0-10 scale.
+// FOLDER: 04 Happiness
+Happiness Color =
+VAR _v = [Avg Happiness (Factor)]
+RETURN
+    SWITCH (
+        TRUE (),
+        ISBLANK ( _v ), "#E5E7EB",
+        _v < 4.5, "#E4572E",
+        _v < 5.5, "#F3A712",
+        _v < 6.5, "#A8C686",
+        "#2E9E6B"
+    )
+
+
+// ##########################  05 | CAREER JOURNEY  ###########################
+
+// FOLDER: 05 Career | FORMAT: 0.0%
+Career Switchers % =
+DIVIDE ( CALCULATE ( [Respondents], fact_survey[Switched Careers] = "Yes" ), [Respondents] )
+
+// 1 = Very Easy ... 5 = Very Difficult
+// FOLDER: 05 Career | FORMAT: 0.00
+Avg Difficulty Score =
+AVERAGE ( fact_survey[Difficulty Score] )
+
+// FOLDER: 05 Career | FORMAT: 0.0%
+Found It Hard % =
+DIVIDE ( CALCULATE ( [Respondents], dim_difficulty[Difficulty Group] = "Difficult" ), [Respondents] )
+
+// FOLDER: 05 Career | FORMAT: $#,##0
+Avg Salary - Switchers =
+CALCULATE ( [Avg Salary], fact_survey[Switched Careers] = "Yes" )
+
+// FOLDER: 05 Career | FORMAT: $#,##0
+Avg Salary - Non-Switchers =
+CALCULATE ( [Avg Salary], fact_survey[Switched Careers] = "No" )
+
+// FOLDER: 05 Career | FORMAT: 0.0%
+Prioritise Salary % =
+DIVIDE ( CALCULATE ( [Respondents], fact_survey[Top Job Priority] = "Better Salary" ), [Respondents] )
+
+// FOLDER: 05 Career | FORMAT: 0.0%
+Prioritise Remote Work % =
+DIVIDE ( CALCULATE ( [Respondents], fact_survey[Top Job Priority] = "Remote Work" ), [Respondents] )
+
+
+// ###########################  06 | RANKING  ###################################
+
+// FOLDER: 06 Ranking | FORMAT: 0
+Salary Rank (Role) =
+IF (
+    NOT ISBLANK ( [Avg Salary (Reliable)] ),
+    RANKX ( ALLSELECTED ( dim_job[Job Title] ), [Avg Salary (Reliable)], , DESC, DENSE )
+)
+
+// Drive a "Top N industries" visual: add this as a visual-level filter -> is 1.
+// 'Top N'[Top N] is a numeric-range parameter (see parameter_tables.dax).
+// FOLDER: 06 Ranking | FORMAT: 0
+Top N Value =
+SELECTEDVALUE ( 'Top N'[Top N], 5 )
+
+// FOLDER: 06 Ranking | FORMAT: 0
+Industry Top N Flag =
+IF (
+    [Respondents] > 0
+        && RANKX ( ALLSELECTED ( dim_industry[Industry] ), [Respondents], , DESC, DENSE ) <= [Top N Value],
+    1,
+    0
+)
+
+// Pareto: running share of respondents when industries are sorted by size
+// FOLDER: 06 Ranking | FORMAT: 0.0%
+Industry Cumulative % =
+VAR _current = [Respondents]
+VAR _industries = ALLSELECTED ( dim_industry[Industry] )
+VAR _running =
+    SUMX ( FILTER ( _industries, [Respondents] >= _current ), [Respondents] )
+VAR _total = CALCULATE ( [Respondents], ALLSELECTED ( dim_industry[Industry] ) )
+RETURN
+    DIVIDE ( _running, _total )
+
+// FOLDER: 06 Ranking
+Top Country (by respondents) =
+VAR _t = ADDCOLUMNS ( VALUES ( dim_country[Country] ), "@n", CALCULATE ( [Respondents] ) )
+VAR _max = MAXX ( _t, [@n] )
+RETURN MAXX ( FILTER ( _t, [@n] = _max ), dim_country[Country] )
+
+// FOLDER: 06 Ranking
+Top Language (by respondents) =
+VAR _t = ADDCOLUMNS ( VALUES ( fact_survey[Favorite Language] ), "@n", CALCULATE ( [Respondents] ) )
+VAR _max = MAXX ( _t, [@n] )
+RETURN MAXX ( FILTER ( _t, [@n] = _max ), fact_survey[Favorite Language] )
+
+// FOLDER: 06 Ranking
+Top Job Priority (by respondents) =
+VAR _t = ADDCOLUMNS ( VALUES ( fact_survey[Top Job Priority] ), "@n", CALCULATE ( [Respondents] ) )
+VAR _max = MAXX ( _t, [@n] )
+RETURN MAXX ( FILTER ( _t, [@n] = _max ), fact_survey[Top Job Priority] )
+
+
+// ########################  07 | TIME & RESPONSE QUALITY  ####################
+// Requires dim_date to be marked as a date table (Table tools > Mark as date table > Date).
+
+// FOLDER: 07 Time | FORMAT: #,0
+Cumulative Respondents =
+VAR _d = MAX ( dim_date[Date] )
+RETURN
+    CALCULATE ( [Respondents], FILTER ( ALL ( dim_date[Date] ), dim_date[Date] <= _d ) )
+
+// FOLDER: 07 Time | FORMAT: 0.0
+Respondents 3-Day Moving Avg =
+AVERAGEX ( DATESINPERIOD ( dim_date[Date], MAX ( dim_date[Date] ), -3, DAY ), [Respondents] )
+
+// FOLDER: 07 Time | FORMAT: 0.0
+Avg Completion Time (min) =
+DIVIDE (
+    CALCULATE ( AVERAGE ( fact_survey[Time Spent (Sec)] ), fact_survey[Response Quality] <> "Idle Session (>30 min)" ),
+    60
+)
+
+// FOLDER: 07 Time | FORMAT: 0.0%
+Clean Responses % =
+DIVIDE ( CALCULATE ( [Respondents], fact_survey[Response Quality] = "Normal" ), [Respondents] )
+
+// FOLDER: 07 Time | FORMAT: 0.0%
+Straight-liners % =
+DIVIDE ( CALCULATE ( [Respondents], fact_survey[Straight-lined Happiness] = TRUE () ), [Respondents] )
+
+
+// ####################  08 | DYNAMIC TEXT / STORYTELLING  ####################
+
+// Use as a card subtitle: shows which slicers are active.
+// FOLDER: 08 Titles
+Selected Filters Text =
+VAR _role =
+    IF ( ISFILTERED ( dim_job[Job Title] ), "Role: " & CONCATENATEX ( VALUES ( dim_job[Job Title] ), dim_job[Job Title], ", " ) & "   " )
+VAR _ind =
+    IF ( ISFILTERED ( dim_industry[Industry] ), "Industry: " & CONCATENATEX ( VALUES ( dim_industry[Industry] ), dim_industry[Industry], ", " ) & "   " )
+VAR _cty =
+    IF ( ISFILTERED ( dim_country[Country] ), "Country: " & CONCATENATEX ( VALUES ( dim_country[Country] ), dim_country[Country], ", " ) & "   " )
+VAR _gen =
+    IF ( ISFILTERED ( fact_survey[Gender] ), "Gender: " & CONCATENATEX ( VALUES ( fact_survey[Gender] ), fact_survey[Gender], ", " ) )
+VAR _out = _role & _ind & _cty & _gen
+RETURN
+    IF ( _out = "", "All respondents", _out )
+
+// FOLDER: 08 Titles
+Title - Metric by Dimension =
+SELECTEDVALUE ( 'Metric Selector'[Metric Selector], "Average Salary" )
+    & " by "
+    & SELECTEDVALUE ( 'Dimension Selector'[Dimension Selector], "Role" )
+    & "  |  "
+    & FORMAT ( [Respondents], "#,0" ) & " respondents"
+
+// FOLDER: 08 Titles
+Insight - Top Paying Role =
+VAR _t =
+    FILTER (
+        ADDCOLUMNS ( VALUES ( dim_job[Job Title] ), "@s", [Avg Salary (Reliable)] ),
+        NOT ISBLANK ( [@s] )
+    )
+VAR _top = TOPN ( 1, _t, [@s], DESC )
+RETURN
+    IF (
+        COUNTROWS ( _top ) = 0,
+        "Not enough data for a ranking",
+        MAXX ( _top, dim_job[Job Title] ) & " is the highest-paid role (avg " & FORMAT ( MAXX ( _top, [@s] ), "$#,##0" ) & ")"
+    )
+
+// FOLDER: 08 Titles
+Insight - Happiness =
+IF (
+    ISBLANK ( [Lowest Scoring Factor] ),
+    "No happiness ratings for this selection",
+    "Least satisfying: " & [Lowest Scoring Factor] & " (" & FORMAT ( MINX ( VALUES ( dim_happiness_factor[Happiness Factor] ), CALCULATE ( [Avg Happiness (Factor)] ) ), "0.0" ) & "/10)"
+        & "  |  Most satisfying: " & [Highest Scoring Factor]
+)
